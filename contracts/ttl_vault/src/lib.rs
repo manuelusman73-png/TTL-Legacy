@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env};
 mod test;
 
 mod types;
-use types::{DataKey, ReleaseStatus, Vault};
+use types::{DataKey, ReleaseStatus, Vault, VaultError};
 
 #[contract]
 pub struct TtlVaultContract;
@@ -46,19 +46,28 @@ impl TtlVaultContract {
     }
 
     /// Owner checks in, resetting the TTL countdown.
-    pub fn check_in(env: Env, vault_id: u64) {
+    ///
+    /// Auth model: `vault.owner.require_auth()` enforces that the transaction
+    /// must be signed by the vault owner. The explicit `NotOwner` check below
+    /// runs first so callers receive a clear error code rather than a generic
+    /// auth failure when they supply a vault_id they do not own.
+    pub fn check_in(env: Env, vault_id: u64, caller: Address) -> Result<(), VaultError> {
+        caller.require_auth();
         let mut vault: Vault = Self::load_vault(&env, vault_id);
-        vault.owner.require_auth();
 
-        assert!(
-            vault.status == ReleaseStatus::Locked,
-            "vault already released"
-        );
+        if caller != vault.owner {
+            return Err(VaultError::NotOwner);
+        }
+
+        if vault.status != ReleaseStatus::Locked {
+            return Err(VaultError::AlreadyReleased);
+        }
 
         vault.last_check_in = env.ledger().timestamp();
         env.storage()
             .persistent()
             .set(&DataKey::Vault(vault_id), &vault);
+        Ok(())
     }
 
     /// Deposit XLM into the vault.

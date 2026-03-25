@@ -1,4 +1,16 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracterror, contracttype, Address};
+
+/// Contract-level errors with explicit, human-readable codes.
+#[contracterror]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaultError {
+    /// Caller is not the vault owner. Only the owner may perform this action.
+    NotOwner = 1,
+    VaultNotFound = 2,
+    AlreadyReleased = 3,
+    NotExpired = 4,
+    InsufficientBalance = 5,
+}
 
 #[contracttype]
 #[derive(Clone)]
