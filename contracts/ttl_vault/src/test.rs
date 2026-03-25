@@ -40,7 +40,7 @@ fn test_check_in_resets_timer() {
     client.check_in(&vault_id);
 
     // TTL remaining should be close to full interval again
-    let remaining = client.get_ttl_remaining(&vault_id);
+    let remaining = client.get_ttl_remaining(&vault_id).unwrap();
     assert!(remaining > 43000 && remaining <= 86400);
 }
 
