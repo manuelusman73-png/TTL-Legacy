@@ -1,25 +1,78 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env};
+#![no_std]
 
-mod test;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, panic_with_error, symbol_short, token, Address, Env,
+};
 
 mod types;
-use types::{DataKey, ReleaseEvent, ReleaseStatus, Vault, RELEASE_TOPIC};
+use types::{DataKey, ReleaseEvent, ReleaseStatus, Vault, RELEASE_TOPIC, VAULT_CREATED_TOPIC};
+
+#[cfg(test)]
+mod test;
+
+pub const VAULT_TTL_THRESHOLD: u32 = 1000;
+pub const VAULT_TTL_LEDGERS: u32 = 200_000;
+pub const INSTANCE_TTL_THRESHOLD: u32 = 1000;
+pub const INSTANCE_TTL_LEDGERS: u32 = 200_000;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ContractError {
+    AlreadyInitialized = 1,
+    InvalidInterval = 2,
+    VaultNotFound = 3,
+    EmptyVault = 4,
+    InvalidAmount = 5,
+    NotOwner = 6,
+    AlreadyReleased = 7,
+    InsufficientBalance = 8,
+    NotAdmin = 9,
+    Paused = 10,
+}
 
 #[contract]
 pub struct TtlVaultContract;
 
 #[contractimpl]
 impl TtlVaultContract {
-    /// One-time initializer — stores the token address used for all transfers.
-    pub fn initialize(env: Env, token_address: Address) {
-        assert!(
-            !env.storage().instance().has(&DataKey::TokenAddress),
-            "already initialized"
-        );
+    // --- admin/config ---
+
+    /// One-time initializer for token/admin configuration.
+    pub fn initialize(env: Env, xlm_token: Address, admin: Address) {
+        if env.storage().instance().has(&DataKey::TokenAddress)
+            || env.storage().instance().has(&DataKey::Admin)
+        {
+            panic_with_error!(&env, ContractError::AlreadyInitialized);
+        }
+
+        admin.require_auth();
         env.storage()
             .instance()
-            .set(&DataKey::TokenAddress, &token_address);
+            .set(&DataKey::TokenAddress, &xlm_token);
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
     }
+
+    pub fn pause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &true);
+    }
+
+    pub fn unpause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &false);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        Self::load_paused(&env)
+    }
+
+    // --- vault lifecycle ---
+
     /// Create a new vault. Returns the vault ID.
     pub fn create_vault(
         env: Env,
@@ -33,12 +86,7 @@ impl TtlVaultContract {
             panic_with_error!(&env, ContractError::InvalidInterval);
         }
 
-        let vault_id: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::VaultCount)
-            .unwrap_or(0u64)
-            + 1;
+        let vault_id = Self::vault_count(env.clone()) + 1;
 
         let vault = Vault {
             owner: owner.clone(),
@@ -57,52 +105,53 @@ impl TtlVaultContract {
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
 
-        // Emit vault creation event
-        let event = VaultCreatedEvent::new(vault_id, owner, beneficiary, check_in_interval);
-        env.events().publish((event.topic(),), event.to_tuple());
+        env.events().publish(
+            (VAULT_CREATED_TOPIC,),
+            (vault_id, owner, beneficiary, check_in_interval),
+        );
 
         vault_id
     }
 
     /// Owner checks in, resetting the TTL countdown.
-    ///
-    /// Auth model: `vault.owner.require_auth()` enforces that the transaction
-    /// must be signed by the vault owner. The explicit `NotOwner` check below
-    /// runs first so callers receive a clear error code rather than a generic
-    /// auth failure when they supply a vault_id they do not own.
-    pub fn check_in(env: Env, vault_id: u64, caller: Address) -> Result<(), VaultError> {
+    pub fn check_in(env: Env, vault_id: u64, caller: Address) -> Result<(), ContractError> {
+        if Self::load_paused(&env) {
+            return Err(ContractError::Paused);
+        }
+
         caller.require_auth();
-        let mut vault: Vault = Self::load_vault(&env, vault_id);
+        let mut vault = Self::load_vault(&env, vault_id);
 
         if caller != vault.owner {
-            return Err(VaultError::NotOwner);
+            return Err(ContractError::NotOwner);
         }
 
         if vault.status != ReleaseStatus::Locked {
-            return Err(VaultError::AlreadyReleased);
+            return Err(ContractError::AlreadyReleased);
         }
 
         vault.last_check_in = env.ledger().timestamp();
-        env.storage()
-            .persistent()
-            .set(&DataKey::Vault(vault_id), &vault);
+        Self::save_vault(&env, vault_id, &vault);
 
-        env.events().publish(
-            (symbol_short!("check_in"), vault_id),
-            vault.last_check_in,
-        );
+        env.events()
+            .publish((symbol_short!("check_in"), vault_id), vault.last_check_in);
+
+        Ok(())
     }
 
-    /// Deposit XLM into the vault.
+    /// Deposit configured token into the vault.
     pub fn deposit(env: Env, vault_id: u64, from: Address, amount: i128) {
-        from.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        Self::assert_not_paused(&env);
+        if amount <= 0 {
+            panic_with_error!(&env, ContractError::InvalidAmount);
+        }
 
-        let mut vault: Vault = Self::load_vault(&env, vault_id);
-        assert!(
-            vault.status == ReleaseStatus::Locked,
-            "vault already released"
-        );
+        from.require_auth();
+
+        let mut vault = Self::load_vault(&env, vault_id);
+        if vault.status != ReleaseStatus::Locked {
+            panic_with_error!(&env, ContractError::AlreadyReleased);
+        }
 
         let xlm = token::Client::new(&env, &Self::load_token(&env));
         xlm.transfer(&from, &env.current_contract_address(), &amount);
@@ -112,18 +161,24 @@ impl TtlVaultContract {
     }
 
     /// Owner withdraws from the vault.
-    pub fn withdraw(env: Env, vault_id: u64, amount: i128) -> Result<(), VaultError> {
-        if amount <= 0 {
-            return Err(VaultError::InvalidAmount);
+    pub fn withdraw(env: Env, vault_id: u64, amount: i128) -> Result<(), ContractError> {
+        if Self::load_paused(&env) {
+            return Err(ContractError::Paused);
         }
-        let mut vault: Vault = Self::load_vault(&env, vault_id);
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        let mut vault = Self::load_vault(&env, vault_id);
         vault.owner.require_auth();
 
         if vault.status != ReleaseStatus::Locked {
-            return Err(VaultError::AlreadyReleased);
+            return Err(ContractError::AlreadyReleased);
         }
+
         if vault.balance < amount {
-            return Err(VaultError::InsufficientBalance);
+            return Err(ContractError::InsufficientBalance);
         }
 
         let xlm = token::Client::new(&env, &Self::load_token(&env));
@@ -136,25 +191,33 @@ impl TtlVaultContract {
 
     /// Anyone can call this once the TTL has lapsed to release funds to beneficiary.
     pub fn trigger_release(env: Env, vault_id: u64) {
-        let mut vault: Vault = Self::load_vault(&env, vault_id);
+        Self::assert_not_paused(&env);
 
-        assert!(
-            vault.status == ReleaseStatus::Locked,
-            "vault already released"
-        );
-        assert!(Self::is_expired(&env, vault_id), "vault not yet expired");
+        let mut vault = Self::load_vault(&env, vault_id);
+
+        if vault.status != ReleaseStatus::Locked {
+            panic_with_error!(&env, ContractError::AlreadyReleased);
+        }
+
+        if !Self::is_expired(env.clone(), vault_id) {
+            panic!("vault not yet expired");
+        }
 
         if vault.balance == 0 {
             panic_with_error!(&env, ContractError::EmptyVault);
         }
 
         let released_amount = vault.balance;
+        let xlm = token::Client::new(&env, &Self::load_token(&env));
+        xlm.transfer(
+            &env.current_contract_address(),
+            &vault.beneficiary,
+            &released_amount,
+        );
 
         vault.balance = 0;
         vault.status = ReleaseStatus::Released;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Vault(vault_id), &vault);
+        Self::save_vault(&env, vault_id, &vault);
 
         env.events().publish(
             (RELEASE_TOPIC,),
@@ -166,9 +229,10 @@ impl TtlVaultContract {
         );
     }
 
-    /// Returns true if the check-in window has passed.
-    pub fn is_expired(env: &Env, vault_id: u64) -> bool {
-        let vault: Vault = Self::load_vault(env, vault_id);
+    // --- views ---
+
+    pub fn is_expired(env: Env, vault_id: u64) -> bool {
+        let vault = Self::load_vault(&env, vault_id);
         let now = env.ledger().timestamp();
         now >= vault.last_check_in + vault.check_in_interval
     }
@@ -178,14 +242,11 @@ impl TtlVaultContract {
     }
 
     pub fn get_ttl_remaining(env: Env, vault_id: u64) -> Option<u64> {
-        let vault: Vault = match env.storage()
-            .persistent()
-            .get(&DataKey::Vault(vault_id)) {
-            Some(v) => v,
-            None => return None,
-        };
+        let vault: Vault = env.storage().persistent().get(&DataKey::Vault(vault_id))?;
+
         let deadline = vault.last_check_in + vault.check_in_interval;
         let now = env.ledger().timestamp();
+
         if now >= deadline {
             Some(0)
         } else {
@@ -193,20 +254,53 @@ impl TtlVaultContract {
         }
     }
 
+    pub fn get_release_status(env: Env, vault_id: u64) -> ReleaseStatus {
+        let vault = Self::load_vault(&env, vault_id);
+        vault.status
+    }
+
+    pub fn vault_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::VaultCount)
+            .unwrap_or(0u64)
+    }
+
     pub fn update_beneficiary(env: Env, vault_id: u64, new_beneficiary: Address) {
-        let mut vault: Vault = Self::load_vault(&env, vault_id);
+        let mut vault = Self::load_vault(&env, vault_id);
         vault.owner.require_auth();
 
-        assert!(
-            vault.status == ReleaseStatus::Locked,
-            "vault already released"
-        );
+        if vault.status != ReleaseStatus::Locked {
+            panic_with_error!(&env, ContractError::AlreadyReleased);
+        }
 
         vault.beneficiary = new_beneficiary;
         Self::save_vault(&env, vault_id, &vault);
     }
 
     // --- helpers ---
+
+    fn assert_not_paused(env: &Env) {
+        if Self::load_paused(env) {
+            panic_with_error!(env, ContractError::Paused);
+        }
+    }
+
+    fn load_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_admin(env: &Env) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+    }
 
     fn load_token(env: &Env) -> Address {
         env.storage()
