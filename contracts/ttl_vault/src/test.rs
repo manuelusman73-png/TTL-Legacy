@@ -173,3 +173,11 @@ fn test_update_beneficiary() {
     let vault = client.get_vault(&vault_id);
     assert_eq!(vault.beneficiary, new_beneficiary);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_load_nonexistent_vault() {
+    let (env, _, _) = setup();
+    let client = TtlVaultContractClient::new(&env, &env.register_contract(None, TtlVaultContract));
+    client.get_vault(&999u64);
+}

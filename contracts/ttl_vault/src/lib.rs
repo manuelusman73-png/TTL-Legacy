@@ -3,6 +3,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env};
 mod test;
 
 mod types;
+use types::{ContractError, DataKey, ReleaseStatus, Vault};
 use types::{DataKey, ReleaseStatus, Vault, VaultError};
 
 /// ~5 years in ledgers (1 ledger ≈ 5 s). Vaults are long-lived by design.
@@ -178,7 +179,7 @@ impl TtlVaultContract {
         env.storage()
             .persistent()
             .get(&DataKey::Vault(vault_id))
-            .expect("vault not found")
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::VaultNotFound))
     }
 
     /// Persist a vault and extend its TTL so it is never silently archived.

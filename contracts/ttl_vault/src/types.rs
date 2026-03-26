@@ -1,5 +1,9 @@
 use soroban_sdk::{contracterror, contracttype, Address};
 
+#[contracterror]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ContractError {
+    VaultNotFound = 1,
 /// Contract-level errors with explicit, human-readable codes.
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
