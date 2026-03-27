@@ -34,12 +34,6 @@ pub enum ContractError {
     NotAdmin = 9,
     Paused = 10,
     InvalidBeneficiary = 11,
-feat/ttl-vault-admin-transfer
-    NoPendingAdmin = 11,
-    InvalidBps = 12,
-    NotExpiringSoon = 13,
-    IntervalTooLow = 14,
-    IntervalTooHigh = 15,
 }
 
 #[contract]
@@ -129,6 +123,8 @@ impl TtlVaultContract {
         if owner == beneficiary {
             panic_with_error!(&env, ContractError::InvalidBeneficiary);
         }
+
+        let vault_id = Self::vault_count(env.clone()) + 1;
 
         let vault_id = Self::vault_count(env.clone()) + 1;
         let vault = Vault {
