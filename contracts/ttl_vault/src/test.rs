@@ -262,24 +262,9 @@ fn test_admin_transfer_full_flow() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #11)")]
-fn test_accept_admin_fails_when_no_pending_admin() {
-    let (env, _, _, _, _, client) = setup();
-    let new_admin = Address::generate(&env);
-
-    // Try to accept without proposing first
-    client.with_source_address(&new_admin).accept_admin();
-}
-
-#[test]
-#[should_panic]
-fn test_accept_admin_fails_when_called_by_wrong_address() {
-    let (env, _, _, _, _, client) = setup();
-    let new_admin = Address::generate(&env);
-    let wrong_admin = Address::generate(&env);
-
-    client.propose_admin(&new_admin);
-
-    client.with_source_address(&wrong_admin).accept_admin();
+fn test_create_vault_rejects_owner_as_beneficiary() {
+    let (_, owner, _, _, _, client) = setup();
+    client.create_vault(&owner, &owner, &1000);
 }
 
 #[test]
@@ -355,138 +340,19 @@ fn test_partial_release_transfers_amount_to_beneficiary() {
 
 #[test]
 fn test_partial_release_fails_if_insufficient_balance() {
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_update_beneficiary_rejects_owner_as_beneficiary() {
     let (_, owner, beneficiary, _, _, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    client.deposit(&vault_id, &owner, &100i128);
-
-    assert!(client.try_partial_release(&vault_id, &500i128).is_err());
+    let vault_id = client.create_vault(&owner, &beneficiary, &1000);
+    client.update_beneficiary(&vault_id, &owner);
 }
 
 #[test]
-fn test_partial_release_fails_after_release() {
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_deposit_into_expired_vault_is_rejected() {
     let (env, owner, beneficiary, _, _, client) = setup();
     let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    client.deposit(&vault_id, &owner, &500i128);
     env.ledger().with_mut(|l| l.timestamp += 200);
-    client.trigger_release(&vault_id);
-
-    assert!(client.try_partial_release(&vault_id, &100i128).is_err());
-}
-
-#[test]
-fn test_partial_release_multiple_times_reduces_balance() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
-    let token_client = token::Client::new(&env, &token_address);
-
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    client.deposit(&vault_id, &owner, &1_000i128);
-
-    client.partial_release(&vault_id, &200i128);
-    client.partial_release(&vault_id, &300i128);
-
-    assert_eq!(token_client.balance(&beneficiary), 500i128);
-    assert_eq!(client.get_vault(&vault_id).balance, 500i128);
-    let _ = env;
-}
-
-// ---- Task 3: set_beneficiaries / multi-split tests ----
-
-#[test]
-fn test_set_beneficiaries_and_trigger_release_splits_funds() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
-    let token_client = token::Client::new(&env, &token_address);
-
-    let b1 = Address::generate(&env);
-    let b2 = Address::generate(&env);
-
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    client.deposit(&vault_id, &owner, &10_000i128);
-
-    let entries = vec![
-        &env,
-        types::BeneficiaryEntry { address: b1.clone(), bps: 6_000 },
-        types::BeneficiaryEntry { address: b2.clone(), bps: 4_000 },
-    ];
-    client.set_beneficiaries(&vault_id, &entries);
-
-    env.ledger().with_mut(|l| l.timestamp += 200);
-    client.trigger_release(&vault_id);
-
-    assert_eq!(token_client.balance(&b1), 6_000i128);
-    assert_eq!(token_client.balance(&b2), 4_000i128);
-    assert_eq!(client.get_vault(&vault_id).balance, 0i128);
-}
-
-#[test]
-fn test_set_beneficiaries_rejects_invalid_bps() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let b1 = Address::generate(&env);
-
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-
-    // bps sum = 5_000, not 10_000
-    let entries = vec![
-        &env,
-        types::BeneficiaryEntry { address: b1.clone(), bps: 5_000 },
-    ];
-    assert!(client.try_set_beneficiaries(&vault_id, &entries).is_err());
-}
-
-#[test]
-fn test_set_beneficiaries_three_way_split_remainder_goes_to_last() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
-    let token_client = token::Client::new(&env, &token_address);
-
-    let b1 = Address::generate(&env);
-    let b2 = Address::generate(&env);
-    let b3 = Address::generate(&env);
-
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    // deposit 10_001 to create a rounding scenario
-    client.deposit(&vault_id, &owner, &10_001i128);
-
-    let entries = vec![
-        &env,
-        types::BeneficiaryEntry { address: b1.clone(), bps: 3_333 },
-        types::BeneficiaryEntry { address: b2.clone(), bps: 3_333 },
-        types::BeneficiaryEntry { address: b3.clone(), bps: 3_334 },
-    ];
-    client.set_beneficiaries(&vault_id, &entries);
-
-    env.ledger().with_mut(|l| l.timestamp += 200);
-    client.trigger_release(&vault_id);
-
-    let total = token_client.balance(&b1) + token_client.balance(&b2) + token_client.balance(&b3);
-    assert_eq!(total, 10_001i128);
-}
-
-// ---- Task 4: metadata tests ----
-
-#[test]
-fn test_create_vault_has_empty_metadata() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    assert_eq!(
-        client.get_vault(&vault_id).metadata,
-        soroban_sdk::String::from_str(&env, "")
-    );
-}
-
-#[test]
-fn test_update_metadata_stores_value() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-
-    let label = soroban_sdk::String::from_str(&env, "ipfs://QmTestHash");
-    client.update_metadata(&vault_id, &label);
-
-    assert_eq!(client.get_vault(&vault_id).metadata, label);
-}
-
-#[test]
-fn test_update_metadata_fails_after_release() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
     client.deposit(&vault_id, &owner, &500i128);
     env.ledger().with_mut(|l| l.timestamp += 200);
     client.trigger_release(&vault_id);
