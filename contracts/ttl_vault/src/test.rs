@@ -670,3 +670,19 @@ fn test_non_owner_cannot_call_check_in() {
     client.with_source_address(&non_owner).check_in(&vault_id, &non_owner);
     let _ = env;
 }
+
+// ---- Issue 49: non-owner cannot call withdraw ----
+
+#[test]
+#[should_panic(expected = "Error(Auth")]
+fn test_non_owner_cannot_call_withdraw() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let non_owner = Address::generate(&env);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &100i128);
+
+    // Call withdraw from non-owner address - should panic with auth error
+    client.with_source_address(&non_owner).withdraw(&vault_id, &10i128);
+    let _ = env;
+}
