@@ -686,3 +686,19 @@ fn test_non_owner_cannot_call_withdraw() {
     client.with_source_address(&non_owner).withdraw(&vault_id, &10i128);
     let _ = env;
 }
+
+// ---- Issue 50: non-owner cannot call update_beneficiary ----
+
+#[test]
+#[should_panic(expected = "Error(Auth")]
+fn test_non_owner_cannot_call_update_beneficiary() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let non_owner = Address::generate(&env);
+    let new_beneficiary = Address::generate(&env);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+
+    // Call update_beneficiary from non-owner address - should panic with auth error
+    client.with_source_address(&non_owner).update_beneficiary(&vault_id, &new_beneficiary);
+    let _ = env;
+}
