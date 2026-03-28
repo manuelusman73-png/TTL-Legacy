@@ -647,3 +647,74 @@ fn test_deposit_rejects_balance_overflow() {
 
     assert!(result.is_err(), "expected overflow error on deposit exceeding i128::MAX");
 }
+
+// ---- Full Vault Lifecycle End-to-End Test ----
+
+#[test]
+fn test_full_vault_lifecycle_end_to_end() {
+    // Set up full environment with token contract
+    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Define test parameters
+    let deposit_amount: i128 = 500i128;
+    let check_in_interval: u64 = 100u64;
+
+    // Step 1: Create vault
+    let vault_id = client.create_vault(&owner, &beneficiary, &check_in_interval);
+
+    // Assert vault was created with correct initial state
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.owner, owner);
+    assert_eq!(vault.beneficiary, beneficiary);
+    assert_eq!(vault.check_in_interval, check_in_interval);
+    assert_eq!(vault.balance, 0i128);
+    assert_eq!(vault.status, ReleaseStatus::Locked);
+    assert_eq!(client.vault_count(), 1);
+
+    // Step 2: Deposit funds
+    client.deposit(&vault_id, &owner, &deposit_amount);
+
+    // Assert balance updated after deposit
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.balance, deposit_amount);
+
+    // Assert owner's token balance decreased
+    let owner_balance = token_client.balance(&owner);
+    assert_eq!(owner_balance, 1_000_000i128 - deposit_amount);
+
+    // Step 3: Check in (reset timer)
+    client.check_in(&vault_id, &owner);
+
+    // Assert vault still locked after check-in
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.status, ReleaseStatus::Locked);
+    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Locked);
+
+    // Verify vault is not expired yet (time hasn't passed)
+    assert!(!client.is_expired(&vault_id));
+
+    // Step 4: Expire - advance time past the check-in interval
+    env.ledger().with_mut(|l| l.timestamp += check_in_interval + 1);
+
+    // Assert vault is now expired
+    assert!(client.is_expired(&vault_id));
+    let ttl = client.ping_expiry(&vault_id);
+    assert_eq!(ttl, 0u64);
+
+    // Step 5: Trigger release
+    client.trigger_release(&vault_id);
+
+    // Assert vault status is now Released
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.status, ReleaseStatus::Released);
+    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Released);
+
+    // Assert beneficiary receives full balance on release
+    let beneficiary_balance = token_client.balance(&beneficiary);
+    assert_eq!(beneficiary_balance, deposit_amount);
+
+    // Assert vault balance is now 0 (funds released)
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.balance, 0i128);
+}
