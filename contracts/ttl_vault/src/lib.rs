@@ -34,6 +34,7 @@ pub enum ContractError {
     NotAdmin = 9,
     Paused = 10,
     InvalidBeneficiary = 11,
+    BalanceOverflow = 12,
 }
 
 #[contract]
@@ -185,7 +186,9 @@ impl TtlVaultContract {
 
         let xlm = token::Client::new(&env, &Self::load_token(&env));
         xlm.transfer(&from, &env.current_contract_address(), &amount);
-        vault.balance += amount;
+        vault.balance = vault.balance
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::BalanceOverflow));
         Self::save_vault(&env, vault_id, &vault);
     }
 
@@ -224,7 +227,9 @@ impl TtlVaultContract {
 
         for validated_deposit in validated.iter() {
             let (vault_id, mut vault, amount) = validated_deposit;
-            vault.balance += amount;
+            vault.balance = vault.balance
+                .checked_add(amount)
+                .unwrap_or_else(|| panic_with_error!(&env, ContractError::BalanceOverflow));
             Self::save_vault(&env, vault_id, &vault);
         }
     }
