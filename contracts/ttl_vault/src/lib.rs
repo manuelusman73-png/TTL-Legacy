@@ -220,6 +220,35 @@ impl TtlVaultContract {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::VaultNotFound))
     }
 
+    /// Proposes a new admin. Only the current admin can call this.
+    /// The proposed address must call `accept_admin` to complete the transfer.
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+    }
+
+    /// Completes the admin transfer. Must be called by the pending admin.
+    ///
+    /// # Panics
+    /// Panics if there is no pending admin
+    pub fn accept_admin(env: Env) {
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NoPendingAdmin));
+        pending.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &pending);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+    }
+
+    /// Returns the pending admin address, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
     // --- vault lifecycle ---
 
     /// Creates a new time-locked vault.
