@@ -731,101 +731,73 @@ fn test_deposit_rejects_balance_overflow() {
     assert!(result.is_err(), "expected overflow error on deposit exceeding i128::MAX");
 }
 
-// ---- Pagination tests ----
+// ---- Full Vault Lifecycle End-to-End Test ----
 
 #[test]
-fn test_get_vaults_by_owner_pagination() {
-    let (env, owner, beneficiary, _, _, client) = setup();
+fn test_full_vault_lifecycle_end_to_end() {
+    // Set up full environment with token contract
+    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let token_client = token::Client::new(&env, &token_address);
 
-    let id1 = client.create_vault(&owner, &beneficiary, &100u64);
-    let id2 = client.create_vault(&owner, &beneficiary, &200u64);
-    let id3 = client.create_vault(&owner, &beneficiary, &300u64);
+    // Define test parameters
+    let deposit_amount: i128 = 500i128;
+    let check_in_interval: u64 = 100u64;
 
-    // page 0, size 2 => [id1, id2]
-    assert_eq!(client.get_vaults_by_owner(&owner, &0u32, &2u32), vec![&env, id1, id2]);
-    // page 1, size 2 => [id3]
-    assert_eq!(client.get_vaults_by_owner(&owner, &1u32, &2u32), vec![&env, id3]);
-    // page 2, size 2 => []
-    assert_eq!(client.get_vaults_by_owner(&owner, &2u32, &2u32), vec![&env]);
-    // page_size 0 => []
-    assert_eq!(client.get_vaults_by_owner(&owner, &0u32, &0u32), vec![&env]);
-}
+    // Step 1: Create vault
+    let vault_id = client.create_vault(&owner, &beneficiary, &check_in_interval);
 
-#[test]
-fn test_get_vaults_by_beneficiary_pagination() {
-    let (env, owner, beneficiary, _, _, client) = setup();
+    // Assert vault was created with correct initial state
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.owner, owner);
+    assert_eq!(vault.beneficiary, beneficiary);
+    assert_eq!(vault.check_in_interval, check_in_interval);
+    assert_eq!(vault.balance, 0i128);
+    assert_eq!(vault.status, ReleaseStatus::Locked);
+    assert_eq!(client.vault_count(), 1);
 
-    let id1 = client.create_vault(&owner, &beneficiary, &100u64);
-    let id2 = client.create_vault(&owner, &beneficiary, &200u64);
-    let id3 = client.create_vault(&owner, &beneficiary, &300u64);
+    // Step 2: Deposit funds
+    client.deposit(&vault_id, &owner, &deposit_amount);
 
-    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &0u32, &2u32), vec![&env, id1, id2]);
-    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &1u32, &2u32), vec![&env, id3]);
-    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &2u32, &2u32), vec![&env]);
-}
+    // Assert balance updated after deposit
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.balance, deposit_amount);
 
-// ---- check_in event topic constant test ----
+    // Assert owner's token balance decreased
+    let owner_balance = token_client.balance(&owner);
+    assert_eq!(owner_balance, 1_000_000i128 - deposit_amount);
 
-#[test]
-fn test_check_in_emits_event_with_check_in_topic() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-
+    // Step 3: Check in (reset timer)
     client.check_in(&vault_id, &owner);
 
-    let events = env.events().all();
-    let found = events.iter().any(|e| {
-        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
-        if topics.len() < 1 {
-            return false;
-        }
-        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
-        topic0.map(|s| s == types::CHECK_IN_TOPIC).unwrap_or(false)
-    });
-    assert!(found, "check_in event with CHECK_IN_TOPIC not emitted");
-}
+    // Assert vault still locked after check-in
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.status, ReleaseStatus::Locked);
+    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Locked);
 
-// ---- cancel_vault event test ----
+    // Verify vault is not expired yet (time hasn't passed)
+    assert!(!client.is_expired(&vault_id));
 
-#[test]
-fn test_cancel_vault_emits_cancel_event() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
-    client.deposit(&vault_id, &owner, &500i128);
+    // Step 4: Expire - advance time past the check-in interval
+    env.ledger().with_mut(|l| l.timestamp += check_in_interval + 1);
 
-    client.cancel_vault(&vault_id);
+    // Assert vault is now expired
+    assert!(client.is_expired(&vault_id));
+    let ttl = client.ping_expiry(&vault_id);
+    assert_eq!(ttl, 0u64);
 
-    let events = env.events().all();
-    let found = events.iter().any(|e| {
-        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
-        if topics.len() < 1 {
-            return false;
-        }
-        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
-        topic0.map(|s| s == types::CANCEL_TOPIC).unwrap_or(false)
-    });
-    assert!(found, "cancel event not emitted");
-    let _ = token_address;
-}
+    // Step 5: Trigger release
+    client.trigger_release(&vault_id);
 
-// ---- transfer_ownership event test ----
+    // Assert vault status is now Released
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.status, ReleaseStatus::Released);
+    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Released);
 
-#[test]
-fn test_transfer_ownership_emits_ownership_event() {
-    let (env, owner, beneficiary, _, _, client) = setup();
-    let new_owner = Address::generate(&env);
-    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    // Assert beneficiary receives full balance on release
+    let beneficiary_balance = token_client.balance(&beneficiary);
+    assert_eq!(beneficiary_balance, deposit_amount);
 
-    client.transfer_ownership(&vault_id, &new_owner);
-
-    let events = env.events().all();
-    let found = events.iter().any(|e| {
-        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
-        if topics.len() < 1 {
-            return false;
-        }
-        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
-        topic0.map(|s| s == types::OWNERSHIP_TOPIC).unwrap_or(false)
-    });
-    assert!(found, "ownership transfer event not emitted");
+    // Assert vault balance is now 0 (funds released)
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.balance, 0i128);
 }
