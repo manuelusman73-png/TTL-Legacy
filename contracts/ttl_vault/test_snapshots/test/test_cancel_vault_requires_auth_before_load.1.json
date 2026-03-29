@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 6,
+    "address": 7,
     "nonce": 0
   },
   "auth": [
@@ -86,7 +86,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u64": 1000
+                  "u64": 100
                 }
               ]
             }
@@ -434,7 +434,7 @@
                         "symbol": "check_in_interval"
                       },
                       "val": {
-                        "u64": 1000
+                        "u64": 100
                       }
                     },
                     {
@@ -1062,7 +1062,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u64": 1000
+                  "u64": 100
                 }
               ]
             }
@@ -1095,7 +1095,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u64": 1000
+                  "u64": 100
                 }
               ]
             }
@@ -1142,7 +1142,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
               },
               {
-                "symbol": "set_beneficiaries"
+                "symbol": "cancel_vault"
               }
             ],
             "data": {
@@ -1151,51 +1151,7 @@
                   "u64": 1
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                },
-                {
-                  "vec": [
-                    {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "address"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "bps"
-                          },
-                          "val": {
-                            "u32": 5000
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "address"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "bps"
-                          },
-                          "val": {
-                            "u32": 5000
-                          }
-                        }
-                      ]
-                    }
-                  ]
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                 }
               ]
             }
@@ -1216,12 +1172,12 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "set_beneficiaries"
+                "symbol": "cancel_vault"
               }
             ],
             "data": {
               "error": {
-                "contract": 17
+                "contract": 6
               }
             }
           }
@@ -1242,7 +1198,7 @@
               },
               {
                 "error": {
-                  "contract": 17
+                  "contract": 6
                 }
               }
             ],
@@ -1267,17 +1223,17 @@
               },
               {
                 "error": {
-                  "contract": 17
+                  "contract": 6
                 }
               }
             ],
             "data": {
               "vec": [
                 {
-                  "string": "contract call failed"
+                  "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "set_beneficiaries"
+                  "symbol": "cancel_vault"
                 },
                 {
                   "vec": [
@@ -1285,80 +1241,11 @@
                       "u64": 1
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                    },
-                    {
-                      "vec": [
-                        {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "address"
-                              },
-                              "val": {
-                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "bps"
-                              },
-                              "val": {
-                                "u32": 5000
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "address"
-                              },
-                              "val": {
-                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "bps"
-                              },
-                              "val": {
-                                "u32": 5000
-                              }
-                            }
-                          ]
-                        }
-                      ]
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                     }
                   ]
                 }
               ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 17
-                }
-              }
-            ],
-            "data": {
-              "string": "escalating error to panic"
             }
           }
         }
