@@ -142,6 +142,11 @@ impl TtlVaultContract {
         if min_interval == 0 {
             panic_with_error!(&env, ContractError::InvalidInterval);
         }
+        if let Some(max) = env.storage().instance().get::<DataKey, u64>(&DataKey::MaxCheckInInterval) {
+            if min_interval > max {
+                panic_with_error!(&env, ContractError::InvalidInterval);
+            }
+        }
         env.storage().instance().set(&DataKey::MinCheckInInterval, &min_interval);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
     }
@@ -161,6 +166,11 @@ impl TtlVaultContract {
         Self::require_admin(&env);
         if max_interval == 0 {
             panic_with_error!(&env, ContractError::InvalidInterval);
+        }
+        if let Some(min) = env.storage().instance().get::<DataKey, u64>(&DataKey::MinCheckInInterval) {
+            if max_interval < min {
+                panic_with_error!(&env, ContractError::InvalidInterval);
+            }
         }
         env.storage().instance().set(&DataKey::MaxCheckInInterval, &max_interval);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
@@ -522,12 +532,13 @@ impl TtlVaultContract {
             panic_with_error!(&env, ContractError::NotExpired);
         }
         let total = vault.balance;
+        if total == 0 {
+            panic_with_error!(&env, ContractError::EmptyVault);
+        }
         let xlm = token::Client::new(&env, &Self::load_token(&env));
 
         if vault.beneficiaries.is_empty() {
-            if total > 0 {
-                xlm.transfer(&env.current_contract_address(), &vault.beneficiary, &total);
-            }
+            xlm.transfer(&env.current_contract_address(), &vault.beneficiary, &total);
             env.events().publish(
                 (RELEASE_TOPIC,),
                 ReleaseEvent { vault_id, beneficiary: vault.beneficiary.clone(), amount: total },
@@ -956,6 +967,7 @@ impl TtlVaultContract {
             return Err(ContractError::AlreadyReleased);
         }
         vault.check_in_interval = new_interval;
+        vault.last_check_in = env.ledger().timestamp();
         Self::save_vault(&env, vault_id, &vault);
         // Explicitly re-extend the vault's persistent TTL using the new (potentially
         // longer) interval so storage outlives the updated check-in deadline.

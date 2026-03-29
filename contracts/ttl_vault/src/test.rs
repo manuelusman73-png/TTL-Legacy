@@ -738,6 +738,8 @@ fn test_withdraw_emits_event() {
 }
 
 #[test]
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_trigger_release_emits_event_with_zero_balance() {
     let (env, owner, beneficiary, _, _, client) = setup();
 
@@ -745,22 +747,8 @@ fn test_trigger_release_emits_event_with_zero_balance() {
     let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
     env.ledger().with_mut(|l| l.timestamp += 200);
 
-    // should succeed and emit a release event with amount: 0
+    // should panic with EmptyVault error
     client.trigger_release(&vault_id);
-
-    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Released);
-
-    let events = env.events().all();
-    let release_event = events.iter().find(|e| {
-        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
-        if topics.len() < 1 {
-            return false;
-        }
-        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
-        topic0.map(|s| s == soroban_sdk::symbol_short!("release")).unwrap_or(false)
-    });
-
-    assert!(release_event.is_some(), "release event not emitted for zero-balance vault");
 }
 
 // ---- Issue #105: set_beneficiaries owner-as-beneficiary guard ----
@@ -914,4 +902,90 @@ fn test_update_beneficiary_updates_index() {
     assert_eq!(client.get_vaults_by_beneficiary(&old_beneficiary, &0u32, &10u32), vec![&env]);
     // new beneficiary now sees the vault
     assert_eq!(client.get_vaults_by_beneficiary(&new_beneficiary, &0u32, &10u32), vec![&env, vault_id]);
+}
+
+
+#[test]
+fn test_update_check_in_interval_resets_last_check_in() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    let initial_check_in = client.get_vault(&vault_id).last_check_in;
+
+    // Advance time significantly
+    env.ledger().with_mut(|l| l.timestamp += 500);
+
+    // Update interval — should reset last_check_in to current timestamp
+    client.update_check_in_interval(&vault_id, &300u64);
+
+    let vault = client.get_vault(&vault_id);
+    let new_check_in = vault.last_check_in;
+
+    // last_check_in should be updated to the current timestamp
+    assert!(new_check_in > initial_check_in);
+    assert_eq!(new_check_in, initial_check_in + 500);
+
+    // Deadline should be recalculated from the new last_check_in
+    let deadline = new_check_in + vault.check_in_interval;
+    let now = env.ledger().timestamp();
+    assert_eq!(deadline - now, 300u64);
+}
+
+
+#[test]
+fn test_set_min_rejects_when_greater_than_existing_max() {
+    let (_, _, _, _, _, client) = setup();
+    client.set_max_check_in_interval(&1_000u64);
+    assert!(client.try_set_min_check_in_interval(&2_000u64).is_err());
+}
+
+#[test]
+fn test_set_max_rejects_when_less_than_existing_min() {
+    let (_, _, _, _, _, client) = setup();
+    client.set_min_check_in_interval(&1_000u64);
+    assert!(client.try_set_max_check_in_interval(&500u64).is_err());
+}
+
+#[test]
+fn test_set_min_and_max_in_order_succeeds() {
+    let (_, _, _, _, _, client) = setup();
+    client.set_min_check_in_interval(&100u64);
+    client.set_max_check_in_interval(&1_000u64);
+    assert_eq!(client.get_min_check_in_interval(), Some(100u64));
+    assert_eq!(client.get_max_check_in_interval(), Some(1_000u64));
+}
+
+#[test]
+fn test_set_max_then_min_in_order_succeeds() {
+    let (_, _, _, _, _, client) = setup();
+    client.set_max_check_in_interval(&1_000u64);
+    client.set_min_check_in_interval(&100u64);
+    assert_eq!(client.get_min_check_in_interval(), Some(100u64));
+    assert_eq!(client.get_max_check_in_interval(), Some(1_000u64));
+}
+
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_trigger_release_zero_balance_multi_beneficiary_returns_empty_vault() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let beneficiary2 = Address::generate(&env);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    
+    // Set multi-beneficiaries but don't deposit
+    client.set_beneficiaries(
+        &vault_id,
+        &owner,
+        &vec![
+            &env,
+            BeneficiaryEntry { address: beneficiary.clone(), bps: 5_000 },
+            BeneficiaryEntry { address: beneficiary2.clone(), bps: 5_000 },
+        ],
+    );
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+
+    // should panic with EmptyVault before iterating beneficiaries
+    client.trigger_release(&vault_id);
 }
