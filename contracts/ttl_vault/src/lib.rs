@@ -794,14 +794,28 @@ impl TtlVaultContract {
     /// # Arguments
     /// * `env` - The Soroban environment
     /// * `owner` - The owner address
+    /// * `status_filter` - Optional status filter (None returns all vaults, Some(status) returns only vaults with that status)
     /// * `page` - Zero-based page index
     /// * `page_size` - Number of items per page
     ///
     /// # Returns
     /// A vector of vault IDs for the requested page
-    pub fn get_vaults_by_owner(env: Env, owner: Address, page: u32, page_size: u32) -> Vec<u64> {
+    pub fn get_vaults_by_owner(env: Env, owner: Address, status_filter: Option<ReleaseStatus>, page: u32, page_size: u32) -> Vec<u64> {
         let all = Self::load_owner_vault_ids(&env, &owner);
-        Self::paginate(&env, all, page, page_size)
+        let filtered = if let Some(status) = status_filter {
+            let mut result = Vec::new(&env);
+            for vault_id in all.iter() {
+                if let Some(vault) = Self::try_load_vault(&env, vault_id) {
+                    if vault.status == status {
+                        result.push_back(vault_id);
+                    }
+                }
+            }
+            result
+        } else {
+            all
+        };
+        Self::paginate(&env, filtered, page, page_size)
     }
 
     /// Returns a paginated slice of vault IDs where a specific address is the beneficiary.
@@ -809,14 +823,28 @@ impl TtlVaultContract {
     /// # Arguments
     /// * `env` - The Soroban environment
     /// * `beneficiary` - The beneficiary address
+    /// * `status_filter` - Optional status filter (None returns all vaults, Some(status) returns only vaults with that status)
     /// * `page` - Zero-based page index
     /// * `page_size` - Number of items per page
     ///
     /// # Returns
     /// A vector of vault IDs for the requested page
-    pub fn get_vaults_by_beneficiary(env: Env, beneficiary: Address, page: u32, page_size: u32) -> Vec<u64> {
+    pub fn get_vaults_by_beneficiary(env: Env, beneficiary: Address, status_filter: Option<ReleaseStatus>, page: u32, page_size: u32) -> Vec<u64> {
         let all = Self::load_beneficiary_vault_ids(&env, &beneficiary);
-        Self::paginate(&env, all, page, page_size)
+        let filtered = if let Some(status) = status_filter {
+            let mut result = Vec::new(&env);
+            for vault_id in all.iter() {
+                if let Some(vault) = Self::try_load_vault(&env, vault_id) {
+                    if vault.status == status {
+                        result.push_back(vault_id);
+                    }
+                }
+            }
+            result
+        } else {
+            all
+        };
+        Self::paginate(&env, filtered, page, page_size)
     }
 
     /// Returns the remaining time-to-live (TTL) for a vault in seconds.
