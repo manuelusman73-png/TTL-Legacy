@@ -355,6 +355,63 @@ fn test_partial_release_transfers_amount_to_beneficiary() {
 
 #[test]
 fn test_partial_release_fails_if_insufficient_balance() {
+    let (_, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &100i128);
+
+    let result = client.try_partial_release(&vault_id, &500i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_partial_release_fails_after_release() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &500i128);
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.trigger_release(&vault_id);
+
+    let result = client.try_partial_release(&vault_id, &100i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_partial_release_multiple_times_reduces_balance() {
+    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let token_client = token::Client::new(&env, &token_address);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &1_000i128);
+
+    client.partial_release(&vault_id, &200i128);
+    client.partial_release(&vault_id, &300i128);
+
+    assert_eq!(client.get_vault(&vault_id).balance, 500i128);
+    assert_eq!(token_client.balance(&beneficiary), 500i128);
+    assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Locked);
+}
+
+#[test]
+fn test_partial_release_emits_event() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &1_000i128);
+
+    client.partial_release(&vault_id, &400i128);
+
+    let events = env.events().all();
+    let partial_event = events.iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        if topics.len() < 1 {
+            return false;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+        topic0.map(|s| s == soroban_sdk::symbol_short!("partial")).unwrap_or(false)
+    });
+    assert!(partial_event.is_some(), "partial event not emitted");
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #11)")]
 fn test_update_beneficiary_rejects_owner_as_beneficiary() {
     let (_, owner, beneficiary, _, _, client) = setup();
